@@ -1,0 +1,7 @@
+version: "3.9"
+services:
+  phpnn:
+    image: "phpnn:latest"
+    container_name: "phpnn"
+    volumes:
+      - ".:/app"
