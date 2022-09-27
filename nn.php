@@ -1,172 +1,243 @@
 <?php declare(strict_types = 1);
 
-class PHP_NN
+$csv = '/app/titanic.csv';
+
+$setup = [
+
+    'cat_max' => 3,           # The maximum number of catgegories allowed in a categorical column. (can baloon parameter size!)
+    'iterations' => 10000,    # How many iterations to run along the gradient.
+    'label' => 'Survived',    # Which column tells the the result we are trying to predict.
+    'layers' => 2,            # How many layers to use in the neural network? Why is 3 worse than 4?
+    'learning_rate' => 0.1,   # How fast should we descend the gradient?
+
+    'cols' => [               # Select the relevant columns from the CSV file and cast them.
+        'Survived' => 'bool',
+        'Pclass' => 'string',
+        'Sex' => 'string',
+        'Age' => 'numeric',
+        'Parch' => 'numeric',
+        'Fare' => 'numeric',
+        'Embarked' => 'string',
+        'SibSp' => 'numeric'
+    ],
+
+    'normalize' => [          # Normalize these columns using numerical and categorical means.
+        'Pclass',
+        'Sex',
+        'Age',
+        'Fare',
+        'Embarked',
+    ],
+
+    'logarithmic' => ['Fare'], # Use logarthimic normalization for these numeric fields. (Good for $$ data)
+
+    'subset' => [658, 55]      # In the fastai course video 3 this is the subset of data used (approximately)
+];
+
+class LearningMachine
 {
-    protected const CATEGORY_MAX = 3;
+    # Data
 
-    private static ?self $singleton;
+    protected array $dataframe;       # original dataframe
+    protected array $labelData;       # label data (actual outcomes)
+    protected array $params;          # model parameters
 
-    protected string $trainingDataPath;
-    protected array $options;
+    # User Settings
 
-    protected array $params;
-    protected array $params1;
+    public array   $cols;             # These are the names of the columns in the CSV file that we care about.
+    public int     $iterations;       # How many times to run the training loop.
+    public float   $learningRate;     # How fast to train the network.
+    public array   $logarithmic;      # Which columns to apply a logarithmic function to.
+    public array   $normalize;        # Which columns to normalize.
+    public int     $catMax = 3;       # The maximum number of uniq values in a column to be considered a categorical column.
+    public string  $label;            # The name of the column that contains the label data.
+    public string  $trainingDataPath; # The path to the CSV file containing the source data.
+    public ?array  $subset;           # The number of rows to use for training and testing.
 
-    protected array $dataframe;
-    protected array $dataframeNrml;
-
-    protected array $labelData;
-
-    protected array $cols;
-    protected array $normalize;
-    protected Closure $lossFunction;
-
-    public static function init(string $trainingDataPath, array $options): self
+    public function __construct(string $trainingDataPath)
     {
-        if (empty(self::$singleton)) {
-            self::$singleton = new self;
-            self::$singleton->trainingDataPath = $trainingDataPath;
-            self::$singleton->options = $options;
-         }
-
-        return self::$singleton;
+        $this->trainingDataPath = $trainingDataPath;
     }
 
-    public static function train(): void
+    public function run(array $options): float
     {
-        self::$singleton->unpack(self::$singleton->options);
-        self::$singleton->loadTrainingData();
-        self::$singleton->normalize();
-        self::$singleton->initParams();
+        $this->unpack($options);                   # Hydrate object properties with the passed options.
 
-        $loss = self::$singleton->calculate(self::$singleton->params, self::$singleton->params1);
+        $this->loadTrainingData();                 # Load the CSV file into memory.
+        $this->normalize();                        # Normalize the data.
 
-        $step = -0.01;
-        $gradient = function () use ($step) {
+        $paramCnt = count($this->dataframe[0]);    # How many parameters do we need to train?
 
-            # Get last params used.
-            $newParams = self::$singleton->params;
-            $newParams1 = self::$singleton->params1;
+        echo "with $paramCnt parameters...\n\t";
 
-            # Increment each param by step.
-            foreach (array_keys($newParams) as $key) {
-                $newParams[$key] = $newParams[$key] + $step;
-                $newParams1[$key] = $newParams1[$key] + $step;
-            }
+        $this->params = $this->initParams();       # Initialize the model parameters.
 
-            # Set new params as last params used.
-            self::$singleton->params = $newParams;
-            self::$singleton->params1 = $newParams1;
+        $loss         = $this->descendGradient();  # Run the training loop.
 
-            # Calculate new params.
-            return self::$singleton->calculate($newParams, $newParams1);
-        };
+        # Report final parameters and loss.
+        echo "loss was $loss\n";
 
-        $min = self::$singleton->descendGradient(
-            $loss,
-            $gradient,
-            $step,
-            count(self::$singleton->dataframe),
-            0.01
-        );
-
-        var_dump($min);
+        return $loss;
     }
 
-    protected function calculate(array $params, array $params1)
+    public function unpack($p): void
     {
-        $predictions = $this->clip($this->sumProduct(
-            $params,
-            $this->dataframeNrml
-        ));
+        $this->learningRate = $p['learning_rate'];
+        $this->iterations   = $p['iterations'];
+        $this->label        = $p['label'];
+        $this->cols         = $p['cols'];
+        $this->normalize    = $p['normalize'];
+        $this->catMax       = $p['cat_max'];
+        $this->logarithmic  = $p['logarithmic'];
+        $this->subset       = $p['subset'] ?? null;
+    }
 
-        $predictions1 = $this->clip($this->sumProduct(
-            $params1,
-            $this->dataframeNrml
-        ));
+    public function initParams(): array
+    {
+        $params = $this->dataframe[0]; # Peel off the first row to use as a parameter template.
 
-        foreach ($predictions as $serial => $prediction) {
-            $predictions[$serial] = $prediction + $predictions1[$serial];
+        # Assign a random value to each parameter.
+
+        foreach (array_keys($params) as $col) {
+            $params[$col] = mt_rand(0, 1) / 100;
         }
 
-        $loss = $this->loss($predictions);
-        $lossAvg = array_sum($loss) / count($loss);
-
-        return $lossAvg;
+        return $params;
     }
 
-    protected function descendGradient($start, $gradient, $step, $count, $threshold): float
+    public function descendGradient(): float
     {
-        $steps = [$start];
-        $x = $start;
+        # Run the loop for the specified number of iterations.
 
-        for ($i = 0; $i < $count; $i++) {
-            $loss = $gradient();
-            $diff = $step * $loss;
+        for ($i = 0; $i < $this->iterations; $i++) {
 
-            if (abs($diff) < $threshold) {
-                break;
-            }
+            # Train the model on each row of the dataframe.
 
-            $x -= $diff;
-            $steps[] = $x;
+            $loss = $this->train($this->params);
+
+            # Adjust the parameters down gradient so we can try again.
+
+            $this->params = $this->adjustParams($this->params);
         }
 
         return $loss;
     }
 
-    protected function sumProduct($params, $data)
+    protected function loss(array $predictions): array
     {
+        # Calculate the loss for each prediction.
+
+        $loss = [];
+        foreach ($predictions as $serial => $prediction) {
+            $label = $this->labelData[$serial];           # The actual outcome.
+            $loss[$serial] = ($prediction - $label) ** 2; # Mean Squared Error
+        }
+
+        return $loss;
+    }
+
+    protected function adjustParams($params): array
+    {
+        # Copy params so we can adjust them without affecting the original.
+
+        $adjParams = $params;
+
+        foreach ($params as $param => $value) {
+
+            # Calculate the partial derivative of the loss function with respect to
+            # the parameter and adjust it using the learning rate.
+
+            $p = $value - $this->learningRate * $this->partialDerivative($param);
+            $adjParams[$param] = $p;
+        }
+
+        # Return the adjusted parameters.
+
+        return $adjParams;
+    }
+
+    protected function partialDerivative(string $param): float
+    {
+        #
+        # TBH, this is the part I understand the least. Need to read up more on derivatives and calculus. The following
+        # is the best of my understanding as is likely to be wrong. I'm just going to leave it here for now.
+        #
+        # We need to calculate the derivative of the loss function to get the slope of the gradient at the current point.
+        # Because we have a multivariate function (i.e. we have more than one parameter in our model), we need to calculate
+        # the partial derivative of the loss function. Which is the same as a derivative, but we only consider
+        # one dimension or parameter at a time. The sum of the partial derivatives is used to calculate the final
+        # derivative of the loss function.
+        #
+        # The exact formula for calculating a derivative is based on the loss function being used. In this case, we are
+        # using the mean squared error loss function. The formula used below I pieced together through a lot of research
+        # and trial and error. I am not 100% sure it is correct, but the numbers seem to work out correctly.
+        #
+        # If I had to do this for a different loss function, I would need to research the correct formula for it or just
+        # actually learn calculus. #shudder
+        #
+        # #IDidntGoToUni
+        #
+
+        # Calculate the partial derivative of the loss function with respect to the parameter.
+
+        $results =  [];
+        foreach ($this->dataframe as $i => $row) {
+
+            $truth = $this->labelData[$i]; # The actual outcome.
+            $results[$i] = ($truth - $this->predict($this->params, $row)) * $row[$param];
+        }
+
+        $rowCount = count($this->dataframe);
+
+        return (-2 / $rowCount) * array_sum($results);
+    }
+
+    protected function train(array $params): float
+    {
+        # Make our predictions using the current parameters.
+
+        $predictions = $this->makePredictions(
+            $params,
+            $this->dataframe
+        );
+
+        # Calculate the loss for each prediction.
+        $loss = $this->loss($predictions);
+
+        # Return the average loss.
+
+        $lossAvg = array_sum($loss) / count($loss);
+
+        return $lossAvg;
+    }
+
+    protected function predict(array $params, array $row): float
+    {
+        # Multiply each parameter by the corresponding value in the row to make a prediction.
+
+        $sum = 0.0;
+        foreach ($params as $col => $param) {
+            $sum += $param * $row[$col];
+        }
+
+        return $sum;
+    }
+
+    protected function makePredictions(array $params, array $data): array
+    {
+        # Sum the predictions from each row.
+
         $sums = [];
         foreach ($data as $serial => $row) {
-            $sum = 0.0;
-            foreach ($params as $col => $param) {
-
-                $sum += $param * $row[$col];
-            }
-
-            $sums[$serial] = $sum;
+            $sums[$serial] = $this->predict($params, $row);
         }
 
         return $sums;
     }
 
-    protected function unpack($p): void
-    {
-        $this->cols = $p['cols'];
-        $this->lossFunction = $p['loss_function'];
-        $this->normalize = $p['normalize'];
-    }
+    # Boilerplate methods to load and process data from CSV.
 
-    protected function loadTrainingData(): array
-    {
-        if (empty($this->dataframe)) {
-
-            $this->dataframe = [];
-        } else {
-
-            return $this->dataframe;
-        }
-
-        $fh = fopen($this->trainingDataPath, 'r');
-
-        $cols = fgetcsv($fh);
-        while ($row = fgetcsv($fh)) {
-            $this->dataframe[] = array_combine($cols, $row);
-        }
-        /*
-
-        $this->dataframe = array_slice(
-            $this->dataframe,
-            659,
-            53,
-            true
-        );*/
-
-        return $this->dataframe;
-    }
-
-    protected function categorize()
+    protected function categorize(): array
     {
         $categories = [];
 
@@ -177,7 +248,7 @@ class PHP_NN
             $colData = array_column($this->dataframe, $col);
             $uniqVals = array_filter(array_unique($colData));
 
-            if (!is_numeric($colData[0]) || count($uniqVals) <= self::CATEGORY_MAX) {
+            if (!is_numeric($colData[0]) || count($uniqVals) <= $this->catMax) {
                 $type = 'categorical';
             } elseif (is_numeric($colData[0])) {
                 $type = 'numeric';
@@ -202,21 +273,48 @@ class PHP_NN
 
            $categories[$col]['type'] = $type ?? null;
            $categories[$col]['range'] = $range ?? null;
-
         }
 
         return $categories;
     }
 
-    protected function normalize()
+    public function loadTrainingData(): array
+    {
+        if (empty($this->dataframe)) {
+
+            $this->dataframe = [];
+        } else {
+
+            return $this->dataframe;
+        }
+
+        $fh = fopen($this->trainingDataPath, 'r');
+
+        $cols = fgetcsv($fh);
+        while ($row = fgetcsv($fh)) {
+            $this->dataframe[] = array_combine($cols, $row);
+        }
+
+        if (!is_null($this->subset)) {
+            $this->dataframe = array_slice($this->dataframe, $this->subset[0], $this->subset[1]);
+        }
+
+        return $this->dataframe;
+    }
+
+    public function normalize(): void
     {
         $categories = $this->categorize();
 
+        $dataframe = [];
         foreach ($this->dataframe as $index => $row) {
-            $this->dataframeNrml[$index] = [];
 
-            $this->labelData[$index] = $row[$this->options['label']];
-            unset($row[$this->options['label']]);
+            $dataframe[$index] = [];
+
+            $this->labelData[$index] = $row[$this->label];
+            unset($row[$this->label]);
+
+            $dataframe[$index]['Ones'] = 1.0;
 
             foreach ($row as $col => $value) {
 
@@ -234,74 +332,98 @@ class PHP_NN
                     if ('categorical' === $type) {
 
                         foreach ($range as $opt) {
-                            $this->dataframeNrml[$index][$col . "_$opt"] = 0.0;
+                            $dataframe[$index][$col . "_$opt"] = 0.0;
                         }
 
                         if (in_array($value, $range)) {
-                            $this->dataframeNrml[$index][$col . "_$value"] = 1.0;
+                            $dataframe[$index][$col . "_$value"] = 1.0;
                         }
                     }
 
                     if ('numeric' === $type) {
 
-                        if (in_array($col, $this->options['logarithmic'])) {
+                        if (in_array($col, $this->logarithmic)) {
                             $value = log10(floatval($value)+1);
                         } else {
                             $value = floatval($value) / $range;
                         }
 
-                        $this->dataframeNrml[$index][$col] = $value;
+                        $dataframe[$index][$col] = $value;
                     }
 
                     continue;
                 }
 
                 $datatype = $this->cols[$col];
+                $value =  $this->cast($datatype, $value);
 
-                switch ($datatype) {
-                    case 'bool':
-                        $value = boolval($value);
-                        break;
-                    case 'numeric':
-                        $value = floatval($value);
-                        break;
-                    case 'string':
-                        $value = strval($value);
-                        break;
-                }
-
-                $this->dataframeNrml[$index][$col] = $value;
+                $dataframe[$index][$col] = $value;
             }
 
-            $this->dataframeNrml[$index]['Ones'] = 1.0;
         }
+
+        $this->dataframe = $dataframe;
     }
 
-    protected function initParams()
+    protected function cast($datatype, $value): mixed
     {
-        if (array_key_exists('hard_params', $this->options)) {
-
-            $this->params = $this->options['hard_params'];
-            $this->params1 = $this->options['hard_params1'];
-
-            return;
+        switch ($datatype) {
+            case 'bool':
+                $value = boolval($value);
+                break;
+            case 'numeric':
+                $value = floatval($value);
+                break;
+            case 'string':
+                $value = strval($value);
+                break;
         }
 
-        $params = $this->dataframeNrml[0];
-        $params1 = $this->dataframeNrml[0];
+        return $value;
+    }
+}
 
-        foreach (array_keys($params) as $col) {
-            $params[$col] = (mt_rand(0, 1) - 0.5) / 100;
-            $params1[$col] = (mt_rand(0, 1) - 0.5) / 100;
+class NeuralLearningMachine extends LearningMachine
+{
+    protected function predict(array $layers, array $row): float
+    {
+        $sums = [];
+
+        for ($i = 0; $i < 2; $i++) {
+            $sums[$i] = parent::predict($this->params[$i], $row);
+        }
+
+        $sums = $this->clip($sums);
+
+        return array_sum($sums);
+    }
+
+    protected function adjustParams($params): array
+    {
+        $adjParams = $params;
+
+        foreach ($params as $layer => $layerParams) {
+            $adjParams[$layer] = parent::adjustParams($layerParams);
+        }
+
+        return $adjParams;
+    }
+
+    public function initParams(): array
+    {
+        $params = [];
+        for ($i = 0; $i < 2; $i++) {
+            $params[$i] = parent::initParams();
+
         }
 
         $this->params = $params;
-        $this->params1 = $params1;
+
+        return $this->params;
     }
 
-    protected function clip(array $n)
+    protected function clip(array $n): array
     {
-
         $o = [];
         foreach ($n as $k => $x) {
             if ($x < 0) {
@@ -313,15 +435,17 @@ class PHP_NN
 
         return $o;
     }
+ }
 
-    protected function loss($predictions)
-    {
-        $loss = [];
-        foreach ($predictions as $serial => $prediction) {
-            $label = floatval($this->labelData[$serial]);
-            $loss[$serial] = pow(($prediction - $label), 2);
-        }
+echo "Running Linear Regression ";
+$linLoss = (new LearningMachine($csv))->run($setup);
 
-        return $loss;
-    }
-}
+echo "Running Neural Network ";
+$neurLoss = (new NeuralLearningMachine($csv))->run($setup);
+$improvement = round(($linLoss - $neurLoss) * 100, 2);
+
+echo "Neural network was $improvement% more accurate than linear regression.\n";
+
+$accuracy = round((1 - $neurLoss) * 100, 2);
+echo "Model can make predictions with approximately $accuracy% accuracy.\n";
+
