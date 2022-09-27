@@ -6,8 +6,7 @@ $setup = [
 
     'cat_max' => 3,           # The maximum number of catgegories allowed in a categorical column. (can baloon parameter size!)
     'iterations' => 10000,    # How many iterations to run along the gradient.
-    'label' => 'Survived',    # Which column tells the the result we are trying to predict.
-    'layers' => 2,            # How many layers to use in the neural network? Why is 3 worse than 4?
+    'label' => 'Survived',    # Which column contains the the result we are trying to predict.
     'learning_rate' => 0.1,   # How fast should we descend the gradient?
 
     'cols' => [               # Select the relevant columns from the CSV file and cast them.
@@ -49,7 +48,7 @@ class LearningMachine
     public float   $learningRate;     # How fast to train the network.
     public array   $logarithmic;      # Which columns to apply a logarithmic function to.
     public array   $normalize;        # Which columns to normalize.
-    public int     $catMax = 3;       # The maximum number of uniq values in a column to be considered a categorical column.
+    public int     $catMax = 3;       # The maximum number of uniq values in a column for it to be considered a categorical.
     public string  $label;            # The name of the column that contains the label data.
     public string  $trainingDataPath; # The path to the CSV file containing the source data.
     public ?array  $subset;           # The number of rows to use for training and testing.

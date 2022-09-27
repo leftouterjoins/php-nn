@@ -6,7 +6,7 @@ A demonstrational neural network in plain 'ol OO PHP.
 
 ## Dependencies:
 
-PHP 8.0+ or Docker
+PHP 8.1+ or Docker
 
 ## Run via local PHP
 
