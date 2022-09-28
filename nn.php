@@ -1,6 +1,7 @@
 <?php declare(strict_types = 1);
 
-$csv = './titanic.csv';
+$trainCsv = './titanic-train.csv';
+$testCsv  = './titanic-test.csv';
 
 $setup = [
 
@@ -50,12 +51,14 @@ class LearningMachine
     public array   $normalize;        # Which columns to normalize.
     public int     $catMax = 3;       # The maximum number of uniq values in a column for it to be considered a categorical.
     public string  $label;            # The name of the column that contains the label data.
-    public string  $trainingDataPath; # The path to the CSV file containing the source data.
+    public string  $trainingDataPath; # The path to the CSV file containing the training data.
+    public string  $testingDataPath;  # The path to the CSV file containing the testing data.
     public ?array  $subset;           # The number of rows to use for training and testing.
 
-    public function __construct(string $trainingDataPath)
+    public function __construct(string $trainingDataPath, string $testingDataPath)
     {
         $this->trainingDataPath = $trainingDataPath;
+        $this->testingDataPath  = $testingDataPath;
     }
 
     public function run(array $options): float
@@ -66,17 +69,28 @@ class LearningMachine
         $this->normalize();                        # Normalize the data.
 
         $paramCnt = count($this->dataframe[0]);    # How many parameters do we need to train?
-
         echo "with $paramCnt parameters...\n\t";
 
         $this->params = $this->initParams();       # Initialize the model parameters.
-
         $loss         = $this->descendGradient();  # Run the training loop.
 
         # Report final parameters and loss.
         echo "loss was $loss\n";
 
         return $loss;
+    }
+
+    public function infer()
+    {
+        $this->dataframe = [];
+        $this->loadTestingData();
+        $this->normalize();
+
+        $predictions = $this->makePredictions($this->params, $this->dataframe);
+
+        foreach ($predictions as $i => $prediction) {
+            echo "Passenger $i: " . ($prediction > 0.05 ? 'Survived' : 'Died') . "\n";
+        }
     }
 
     public function unpack($p): void
@@ -247,6 +261,13 @@ class LearningMachine
             $colData = array_column($this->dataframe, $col);
             $uniqVals = array_filter(array_unique($colData));
 
+
+            if (empty($colData)) {
+                var_dump($this->dataframe);
+                debug_print_backtrace();
+                die();
+            }
+
             if (!is_numeric($colData[0]) || count($uniqVals) <= $this->catMax) {
                 $type = 'categorical';
             } elseif (is_numeric($colData[0])) {
@@ -255,9 +276,7 @@ class LearningMachine
                 continue;
             }
 
-            if (is_numeric($colData[0])) {
-                sort($uniqVals);
-            }
+            sort($uniqVals);
 
             array_pop($uniqVals);
 
@@ -277,9 +296,19 @@ class LearningMachine
         return $categories;
     }
 
+    public function loadTestingData(): array
+    {
+        return $this->loadData($this->testingDataPath, false);
+    }
+
     public function loadTrainingData(): array
     {
-        if (empty($this->dataframe)) {
+        return $this->loadData($this->trainingDataPath);
+    }
+
+    public function loadData(string $path, bool $subset = true): array
+    {
+         if (empty($this->dataframe)) {
 
             $this->dataframe = [];
         } else {
@@ -287,14 +316,14 @@ class LearningMachine
             return $this->dataframe;
         }
 
-        $fh = fopen($this->trainingDataPath, 'r');
+        $fh = fopen($path, 'r');
 
         $cols = fgetcsv($fh);
         while ($row = fgetcsv($fh)) {
             $this->dataframe[] = array_combine($cols, $row);
         }
 
-        if (!is_null($this->subset)) {
+        if ($subset && !is_null($this->subset)) {
             $this->dataframe = array_slice($this->dataframe, $this->subset[0], $this->subset[1]);
         }
 
@@ -310,7 +339,7 @@ class LearningMachine
 
             $dataframe[$index] = [];
 
-            $this->labelData[$index] = $row[$this->label];
+            $this->labelData[$index] = $row[$this->label] ?? null;
             unset($row[$this->label]);
 
             $dataframe[$index]['Ones'] = 1.0;
@@ -364,7 +393,7 @@ class LearningMachine
         $this->dataframe = $dataframe;
     }
 
-    protected function cast($datatype, $value): mixed
+    protected function cast(string $datatype, mixed $value): mixed
     {
         switch ($datatype) {
             case 'bool':
@@ -437,14 +466,18 @@ class NeuralLearningMachine extends LearningMachine
  }
 
 echo "Running Linear Regression ";
-$linLoss = (new LearningMachine($csv))->run($setup);
+$linLoss = (new LearningMachine($trainCsv, $testCsv))->run($setup);
 
 echo "Running Neural Network ";
-$neurLoss = (new NeuralLearningMachine($csv))->run($setup);
+$nn = new NeuralLearningMachine($trainCsv, $testCsv);
+$neurLoss = $nn->run($setup);
 $improvement = round(($linLoss - $neurLoss) * 100, 2);
 
 echo "Neural network was $improvement% more accurate than linear regression.\n";
 
 $accuracy = round((1 - $neurLoss) * 100, 2);
 echo "Model can make predictions with approximately $accuracy% accuracy.\n";
+
+$nn->infer();
+
 
