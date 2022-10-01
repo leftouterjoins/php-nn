@@ -171,7 +171,6 @@ class LearningMachine
 
     protected function partialDerivative(string $param): float
     {
-        #
         # TBH, this is the part I understand the least. Need to read up more on derivatives and calculus. The following
         # is the best of my understanding as is likely to be wrong. I'm just going to leave it here for now.
         #
@@ -186,10 +185,7 @@ class LearningMachine
         # and trial and error. I am not 100% sure it is correct, but the numbers seem to work out correctly.
         #
         # If I had to do this for a different loss function, I would need to research the correct formula for it or just
-        # actually learn calculus. #shudder
-        #
-        # #IDidntGoToUni
-        #
+        # actually learn calculus.
 
         # Calculate the partial derivative of the loss function with respect to the parameter.
 
