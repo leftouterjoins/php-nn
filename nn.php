@@ -6,9 +6,9 @@ $testCsv  = './titanic-test.csv';
 $setup = [
 
     'cat_max' => 3,           # The maximum number of catgegories allowed in a categorical column. (can baloon parameter size!)
-    'iterations' => 10000,    # How many iterations to run along the gradient.
+    'iterations' => 100000,   # How many iterations to run along the gradient.
     'label' => 'Survived',    # Which column contains the the result we are trying to predict.
-    'learning_rate' => 0.1,   # How fast should we descend the gradient?
+    'learning_rate' => 0.01,   # How fast should we descend the gradient?
 
     'cols' => [               # Select the relevant columns from the CSV file and cast them.
         'Survived' => 'bool',
@@ -31,7 +31,7 @@ $setup = [
 
     'logarithmic' => ['Fare'], # Use logarthimic normalization for these numeric fields. (Good for $$ data)
 
-    'subset' => [658, 55]      # In the fastai course video 3 this is the subset of data used (approximately)
+    # 'subset' =>[658, 55]     # In the fastai course video 3 this is the subset of data used (approximately)
 ];
 
 class LearningMachine
@@ -80,19 +80,6 @@ class LearningMachine
         return $loss;
     }
 
-    public function infer()
-    {
-        $this->dataframe = [];
-        $this->loadTestingData();
-        $this->normalize();
-
-        $predictions = $this->makePredictions($this->params, $this->dataframe);
-
-        foreach ($predictions as $i => $prediction) {
-            echo "Passenger $i: " . ($prediction > 0.05 ? 'Survived' : 'Died') . "\n";
-        }
-    }
-
     public function unpack($p): void
     {
         $this->learningRate = $p['learning_rate'];
@@ -134,6 +121,19 @@ class LearningMachine
         }
 
         return $loss;
+    }
+
+    public function infer()
+    {
+        $this->dataframe = [];
+        $this->loadTestingData();
+        $this->normalize();
+
+        $predictions = $this->makePredictions($this->params, $this->dataframe);
+
+        foreach ($predictions as $i => $prediction) {
+            echo "Passenger $i: " . ($prediction > 0.05 ? 'Survived' : 'Died') . "\n";
+        }
     }
 
     protected function loss(array $predictions): array
@@ -479,5 +479,4 @@ $accuracy = round((1 - $neurLoss) * 100, 2);
 echo "Model can make predictions with approximately $accuracy% accuracy.\n";
 
 $nn->infer();
-
 
